@@ -307,7 +307,7 @@
       <span class="t1 rise">JEA's</span>
       <span class="t2 rise">Pingpong</span>
     </div>
-    <p id="sub" class="rise">화면 맨 아래 띠를 엄지로 좌우로 밀면<br>막대가 따라옵니다 · 먼저 5점을 내면 이깁니다</p>
+    <p id="sub" class="rise">맨 아래 띠를 엄지로 좌우로 밀면 막대가 따라옵니다<br>옆으로 밀며 치면 공이 세게 나가고,<br>막대가 금빛으로 번쩍일 때 밀며 치면 1.5배 강타<br>먼저 5점을 내면 이깁니다</p>
     <div id="result">
       <div id="eyebrow">JEA's Pingpong</div>
       <div id="headline"></div>
@@ -567,13 +567,26 @@ var Snd = (function(){
       });
     }
   }
+  function charge(){
+    if(!ctx || muted) return;
+    const t = ctx.currentTime;
+    tone(t, 320, 0.32, 0.22, 'triangle', sfxBus, {bendTo:1280, bendDur:0.28, lp:3000, a:0.01, d:0.2, s:0.5, send:0.5});
+    tone(t + 0.26, hz(88), 0.3, 0.2, 'sine', sfxBus, {a:0.004, d:0.1, s:0.3, send:0.6});
+  }
+  function smash(){
+    if(!ctx || muted) return;
+    const t = ctx.currentTime;
+    tone(t, 150, 0.28, 0.7, 'sine', sfxBus, {bendTo:50, bendDur:0.12, a:0.002, d:0.18, s:0.1});
+    noise(t, 0.06, 0.5, 'bandpass', 2200, 0.8, sfxBus);
+    tone(t + 0.02, hz(91), 0.22, 0.4, 'triangle', sfxBus, {lp:4000, a:0.003, d:0.1, s:0.1, send:0.5});
+  }
   function toggle(){
     muted = !muted;
     if(ctx) master.gain.setTargetAtTime(muted ? 0 : 0.9, ctx.currentTime, 0.02);
     return muted;
   }
   function isPlaying(){ return playing; }
-  return {unlock, startMusic, stopMusic, tempo, paddle, wall, won, lost, levelUp, fanfare, toggle, isPlaying};
+  return {unlock, startMusic, stopMusic, tempo, paddle, wall, won, lost, levelUp, fanfare, charge, smash, toggle, isPlaying};
 })();
 </script>
 
@@ -633,13 +646,17 @@ var Snd = (function(){
   let level = 1, hits = 0, playTime = 0, tun = tuning(1);
   let faceA = 0, faceTarget = FACE_PLAY;
   let smile = 0, smileTarget = 0;              // 0=평소, 1=활짝 웃음
+  let powerOn = false, powerT = 0, powerCd = 6 + Math.random() * 6;   // 막대 번쩍(강타 기회) 타이머
+  let pop = null;                              // 강타 글자 {text,x,y,t}
+  const POWER_LEN = 3;
+  const UI_FONT = "'SUIT Variable','SUIT','Pretendard',sans-serif";
   const warp = document.createElement('canvas'), wctx = warp.getContext('2d');
   const layer = document.createElement('canvas'), lctx = layer.getContext('2d');
   let basePw = 100;
 
   const score = { me:0, cpu:0 };
   const ball = { x:0, y:0, vx:0, vy:0, r:8, speed:0, mul:1 };
-  const me  = { x:0, y:0, w:0, h:12 };
+  const me  = { x:0, y:0, w:0, h:12, vx:0, px:0 };   // vx=엄지로 미는 속도(px/s)
   const cpu = { x:0, y:0, w:0, h:12, err:0 };
   const trail = [];
 
@@ -665,8 +682,9 @@ var Snd = (function(){
     basePw = Math.max(70, Math.min(W * 0.24, 150));
     cpu.w = basePw;
     me.w = basePw * tun.padScale;
-    me.h = cpu.h = Math.max(11, H * 0.016);
-    me.y  = H - H * 0.15 - me.h;              // 엄지보다 위에 두어 손가락에 안 가리게
+    cpu.h = Math.max(11, H * 0.016);
+    me.h  = Math.max(18, H * 0.026);           // 내 막대는 두껍게
+    me.y  = H - H * 0.20 - me.h;              // 엄지보다 위에 두어 손가락에 안 가리게
     const hudBottom = hud.getBoundingClientRect().bottom;
     cpu.y = Math.max(H * 0.085, hudBottom + 8);
     ball.r = Math.max(6, Math.min(W, H) * 0.022);
@@ -715,6 +733,8 @@ var Snd = (function(){
     hits = 0; playTime = 0; setLevel(1, false);
     bubble.hidden = true;
     faceTarget = FACE_PLAY; smileTarget = 0; smile = 0;
+    powerOn = false; powerT = 0; powerCd = 6 + Math.random() * 6; pop = null;
+    me.vx = 0; me.px = me.x;
     resetBall(Math.random() < 0.5 ? 1 : -1);
     state = 'serve'; serveTimer = 0.8;
     overlay.hidden = true;
@@ -764,16 +784,31 @@ var Snd = (function(){
 
   function bounceOff(p, goingUp){
     const off = clamp((ball.x - p.x) / (p.w / 2), -1, 1);
-    const ang = off * MAX_ANGLE;
+    let ang = off * MAX_ANGLE, power = 1, kind = 0;   // kind 0=보통 1=밀며 침 2=강타
+    if(p === me){
+      const push = clamp(Math.abs(me.vx) / (W * 2.2), 0, 1);   // 0=멈춘 채 침, 1=빠르게 밀며 침
+      if(push > 0.12){
+        ang = clamp(ang + Math.sign(me.vx) * push * 0.45, -1.25, 1.25);   // 미는 방향으로 더 꺾임
+        power = 1 + 0.35 * push;                                          // 최대 1.35배
+        kind = 1;
+        if(powerOn){ power = 1.5; kind = 2; powerOn = false; powerCd = 6 + Math.random() * 6; }
+      }
+    }
     ball.mul = Math.min(ball.mul * tun.stepMul, tun.cap);
-    const s = ball.speed * ball.mul;
+    const s = ball.speed * ball.mul * power;           // power는 이번 한 번의 반발에만 적용
     ball.vx = Math.sin(ang) * s;
     ball.vy = Math.cos(ang) * s * (goingUp ? -1 : 1);
-    flash = 1;
+    flash = kind === 2 ? 1.6 : (kind === 1 ? 1 + (power - 1) : 1);
     hits++;
-    Snd.paddle(hits, level);
+    if(kind === 2){
+      Snd.smash();
+      pop = {text:'강타 ×1.5', x:ball.x, y:me.y - 26, t:1.0};
+      if(navigator.vibrate) navigator.vibrate([14, 24, 14]);
+    }else{
+      Snd.paddle(hits, level);
+      if(navigator.vibrate) navigator.vibrate(kind === 1 ? 9 : 6);
+    }
     musicTempo();
-    if(navigator.vibrate) navigator.vibrate(6);
   }
 
   function update(dt){
@@ -781,6 +816,7 @@ var Snd = (function(){
     smile += (smileTarget - smile) * Math.min(1, dt * 3.2);
     if(state === 'serve'){
       serveTimer -= dt;
+      me.vx = 0; me.px = me.x;
       if(serveTimer <= 0) state = 'play';
       return;
     }
@@ -788,6 +824,20 @@ var Snd = (function(){
 
     playTime += dt;
     updateLevel();
+
+    // 내 막대 속도(엄지로 미는 빠르기) — 살짝 평활
+    me.vx = me.vx * 0.45 + ((me.x - me.px) / dt) * 0.55;
+    me.px = me.x;
+
+    // 랜덤 번쩍: 6~12초마다 3초 동안 막대가 금빛으로 빛남
+    if(powerOn){
+      powerT -= dt;
+      if(powerT <= 0){ powerOn = false; powerCd = 6 + Math.random() * 6; }
+    }else{
+      powerCd -= dt;
+      if(powerCd <= 0){ powerOn = true; powerT = POWER_LEN; Snd.charge(); if(navigator.vibrate) navigator.vibrate(20); }
+    }
+    if(pop){ pop.t -= dt; pop.y -= dt * 40; if(pop.t <= 0) pop = null; }
 
     // 제아(컴퓨터) — 공이 올라올 때 따라가고, 아니면 가운데로 복귀
     const chasing = ball.vy < 0;
@@ -862,9 +912,9 @@ var Snd = (function(){
     target.drawImage(warp, cx - bw / 2, cy - bh / 2 - pad, bw, bh + pad * 2);
   }
 
-  function pill(x, y, w, h, color, glow){
+  function pill(x, y, w, h, color, glow, blur){
     ctx.save();
-    ctx.shadowColor = glow; ctx.shadowBlur = 16; ctx.shadowOffsetY = 6;
+    ctx.shadowColor = glow; ctx.shadowBlur = blur || 16; ctx.shadowOffsetY = 6;
     ctx.fillStyle = color;
     ctx.beginPath(); ctx.roundRect(x, y, w, h, h / 2); ctx.fill();
     ctx.restore();
@@ -905,7 +955,7 @@ var Snd = (function(){
     ctx.fillStyle = top; ctx.fillRect(0, 0, W, H * 0.2);
 
     // 맨 아래 띠 — 엄지를 여기서 좌우로 밀면 막대가 따라옴(막대는 그 위에 있어 손가락에 안 가림)
-    const strip = H * 0.105;
+    const strip = H * 0.13;
     ctx.fillStyle = 'rgba(20,24,31,.045)';
     ctx.fillRect(0, H - strip, W, strip);
     ctx.strokeStyle = 'rgba(20,24,31,.10)'; ctx.lineWidth = 1;
@@ -919,7 +969,15 @@ var Snd = (function(){
 
     // 막대
     pill(cpu.x - cpu.w / 2, cpu.y, cpu.w, cpu.h, '#F0634F', 'rgba(240,99,79,.35)');
-    pill(me.x - me.w / 2, me.y, me.w, me.h, '#2F6BFF', 'rgba(47,107,255,.35)');
+    if(powerOn){
+      const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 70);          // 번쩍임
+      pill(me.x - me.w / 2, me.y, me.w, me.h, pulse > 0.5 ? '#FFC93C' : '#F5A800', 'rgba(255,190,40,' + (0.55 + 0.4 * pulse) + ')', 26 + 18 * pulse);
+      // 남은 시간 고리
+      ctx.strokeStyle = 'rgba(245,168,0,.9)'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(me.x, me.y - 16, 8, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (powerT / POWER_LEN)); ctx.stroke();
+    }else{
+      pill(me.x - me.w / 2, me.y, me.w, me.h, '#2F6BFF', 'rgba(47,107,255,.35)');
+    }
 
     // 공 잔상
     for(let i = 0; i < trail.length; i++){
@@ -935,8 +993,18 @@ var Snd = (function(){
     }
     // 타격 잔광
     if(flash > 0){
-      ctx.fillStyle = 'rgba(255,255,255,' + (flash * 0.9) + ')';
+      ctx.fillStyle = 'rgba(255,255,255,' + Math.min(1, flash * 0.9) + ')';
       ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.r + 12 * flash, 0, Math.PI * 2); ctx.fill();
+    }
+    // 강타 글자
+    if(pop){
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, pop.t * 2);
+      ctx.font = '800 22px ' + UI_FONT;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(244,242,238,.9)'; ctx.strokeText(pop.text, pop.x, pop.y);
+      ctx.fillStyle = '#C27A00'; ctx.fillText(pop.text, pop.x, pop.y);
+      ctx.restore();
     }
     // 공
     ctx.save();
@@ -1000,6 +1068,8 @@ var Snd = (function(){
     get state(){ return state; }, get level(){ return level; },
     get hits(){ return hits; }, get playTime(){ return playTime; },
     get faceA(){ return faceA; }, get tuning(){ return tun; },
+    get powerOn(){ return powerOn; }, get powerT(){ return powerT; }, get pop(){ return pop; },
+    setPower: function(on){ powerOn = on; powerT = on ? POWER_LEN : 0; },
     faceRect: faceRect, size: function(){ return {W:W, H:H}; }
   };
 })();
