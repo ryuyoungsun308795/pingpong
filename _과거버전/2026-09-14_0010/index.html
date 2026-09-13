@@ -636,7 +636,7 @@ var Snd = (function(){
       cpuChase: 0.28 + 0.07 * k,           // 제아 막대 속도
       cpuIdle: 0.14 + 0.03 * k,
       cpuErr: Math.max(0.10, 0.60 - 0.06 * k),   // 제아 조준 오차(막대 폭 대비)
-      padScale: 1                                // 내 막대 폭 = 제아와 동일(레벨과 무관)
+      padScale: Math.max(0.72, 1 - 0.035 * k)    // 내 막대 폭 배율
     };
   }
 
@@ -958,24 +958,8 @@ var Snd = (function(){
     const strip = H * 0.13;
     ctx.fillStyle = 'rgba(20,24,31,.045)';
     ctx.fillRect(0, H - strip, W, strip);
-    ctx.strokeStyle = 'rgba(20,24,31,.12)'; ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(20,24,31,.10)'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(0, H - strip + 0.5); ctx.lineTo(W, H - strip + 0.5); ctx.stroke();
-    // 띠 안: 안내 글 + 트랙 + 엄지 손잡이(막대와 같은 x) + 막대까지 점선
-    const ty = H - strip * 0.42;
-    ctx.font = '700 13px ' + UI_FONT; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = 'rgba(20,24,31,.45)';
-    ctx.fillText('◂  엄지로 좌우로 밀기  ▸', W / 2, H - strip + 18);
-    ctx.strokeStyle = 'rgba(20,24,31,.14)'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(22, ty); ctx.lineTo(W - 22, ty); ctx.stroke();
-    ctx.setLineDash([3, 6]); ctx.strokeStyle = 'rgba(47,107,255,.45)'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(me.x, ty - 14); ctx.lineTo(me.x, me.y + me.h + 4); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = 'rgba(47,107,255,.22)';
-    ctx.beginPath(); ctx.arc(me.x, ty, 20, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#2F6BFF';
-    ctx.beginPath(); ctx.arc(me.x, ty, 11, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,.9)';
-    ctx.beginPath(); ctx.arc(me.x, ty, 4, 0, Math.PI * 2); ctx.fill();
 
     // 코트 — 가는 중앙선과 중심점
     ctx.strokeStyle = 'rgba(20,24,31,.13)'; ctx.lineWidth = 1;
